@@ -6674,3 +6674,45 @@ def reduce_first(tensor, reduced_dim):
   r = mtf_range(tensor.mesh, reduced_dim, dtype=tf.int32)
   first_element_filter = cast(equal(r, 0), tensor.dtype)
   return reduce_sum(tensor * first_element_filter, reduced_dim=reduced_dim)
+
+def calculate_same_padding_size(input_size, filter_size, strides):
+  """Calculates the padding for a same padding convolution.
+
+  Given the input, filter and stride size for a single dimensions, the padding can be calculated with
+  if input_size % stride == 0:
+    padding = max(filter_size - stride, 0)
+  else:
+    padding = max(filter_size - (input_size % stride), 0)
+
+  In the case of an odd padding postpadding is prefered.
+
+  Args:
+    input_size: a Shape with the input dimensions
+    filter_size: a Tuple with the filter sizes
+    strides: a Tuple with with the strides
+  Returns:
+    a List with shape [<dimension>, <2>]
+  """
+
+  if len(filter_size) != len(strides):
+    raise ValueError("Dimension of filter and stride have to be the same. Filter is %d and stride %d",
+                     (len(filter_size), len(strides)))
+  if not isinstance(input_size, Shape):
+    raise ValueError("Input size needs to be type 'Shape'")
+
+  dimension = len(filter_size)
+  paddings = []
+  for i in range(dimension):
+    _input_size = input_size.dims[i - (dimension + i)].size
+    _filter_size = filter_size[i]
+    _strides = strides[i]
+    if _input_size % _strides == 0:
+      padding = max(_filter_size - _strides, 0)
+    else:
+      padding = max(_filter_size - (_input_size % _strides), 0)
+    if padding % 2 == 0:
+      paddings.append([padding // 2, padding // 2])
+    else:
+      paddings.append([padding // 2, padding // 2 + 1])
+
+  return paddings
