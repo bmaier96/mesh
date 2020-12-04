@@ -671,6 +671,30 @@ class RecomputeGradTest(tf.test.TestCase):
                         self.evaluate(expected_dx))
 
 
+class SamePaddingTest(tf.test.TestCase):
+
+    def testSamePadding(self):
+      input_size = mtf.Shape([("batch", 1), ("width", 16), ("height", 16), ("channels", 1)])
+      filter_size = (3, 3)
+      strides = (1, 1)
+      paddings = mtf.calculate_same_padding_size(input_size, filter_size, strides)
+      self.assertEqual(paddings, [[1, 1], [1, 1]])
+
+    def testSamePaddingStrides(self):
+      input_size = mtf.Shape([("batch", 1), ("width", 16), ("height", 16), ("channels", 1)])
+      filter_size = (3, 3)
+      strides = (2, 2)
+      paddings = mtf.calculate_same_padding_size(input_size, filter_size, strides)
+      self.assertEqual(paddings, [[0, 1], [0, 1]])
+
+    def testSamePadding3D(self):
+      input_size = mtf.Shape([("batch", 1), ("x", 16), ("y", 16), ("z", 16), ("channels", 1)])
+      filter_size = (5, 5, 5)
+      strides = (1, 1, 1)
+      paddings = mtf.calculate_same_padding_size(input_size, filter_size, strides)
+      self.assertEqual(paddings, [[2, 2], [2, 2], [2, 2]])
+
+
 if __name__ == "__main__":
   tf.disable_v2_behavior()
   tf.enable_eager_execution()
