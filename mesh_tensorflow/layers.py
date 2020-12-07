@@ -919,39 +919,8 @@ def conv3d_transpose_with_blocks(
       [batch, d_blocks_dim, h_blocks_dim, w_blocks_dim,
        d_dim, h_dim, w_dim, out_channels_dim]
   """
-  # If d_blocks_dim and h_blocks_dim are not split, directly call conv3d_trans.
-  if d_blocks_dim is None and h_blocks_dim is None:
-    return conv3d_transpose(
-        x, output_dim, filter_size, strides, padding, filter_initializer,
-        variable_dtype, name)
-
-  # Now only supports even-sized filters.
-  assert filter_size[0] % 2 == 0
-  assert filter_size[1] % 2 == 0
-  assert filter_size[2] % 2 == 0
-
-  # Padding 'VALID' is not supported yet.
-  if padding != "SAME":
-    raise NotImplementedError(
-        "conv3d_transpose_with_blocks requires padding=SAME")
-
-  # Halo exchange for d_blocks and h_blocks.
-  # TODO(lehou): figure out the halo_size in general cases.
-  d_dim, h_dim, w_dim = x.shape.dims[-4:-1]
-  for blocks_dim, block_size_dim, halo_size in [
-      (d_blocks_dim, d_dim, filter_size[0] // 2 - 1),
-      (h_blocks_dim, h_dim, filter_size[1] // 2 - 1)]:
-    if halo_size > 0:
-      if blocks_dim is not None:
-        x = mtf.halo_exchange(x, blocks_dim, block_size_dim, halo_size)
-      else:
-        x = mtf.pad(x, [halo_size, halo_size], block_size_dim.name)
-
-  # Pad w dimension with zeros.
-  x = mtf.pad(x, [filter_size[2] // 2 - 1, filter_size[2] // 2 - 1],
-              dim_name=w_dim.name, name="conv3d_trans_pad_w_dim")
   return conv3d_transpose(
-      x, output_dim, filter_size, strides, "VALID", filter_initializer,
+      x, output_dim, filter_size, strides, padding, filter_initializer,
       variable_dtype, name)
 
 
