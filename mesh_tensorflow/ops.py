@@ -3177,15 +3177,11 @@ class Conv3dOperation(Operation):
     out_h = self._in_h_dim.size
     out_w = self._in_w_dim.size
     if padding == "VALID":
-      out_d -= (self._fd_dim.size - 1)
-      out_h -= (self._fh_dim.size - 1)
-      out_w -= (self._fw_dim.size - 1)
+      out_d = (self._in_d_dim.size - self._fd_dim.size) // strides[1] + 1
+      out_h = (self._in_h_dim.size - self._fh_dim.size) // strides[2] + 1
+      out_w = (self._in_w_dim.size - self._fw_dim.size) // strides[3] + 1
 
     self._strides = strides
-    if strides is not None:
-      out_d //= strides[1]
-      out_h //= strides[2]
-      out_w //= strides[3]
     self._out_d_dim = Dimension(self._in_d_dim.name, out_d)
     self._out_h_dim = Dimension(self._in_h_dim.name, out_h)
     self._out_w_dim = Dimension(self._in_w_dim.name, out_w)
@@ -3564,6 +3560,74 @@ def conv3d_transpose_backprop_filter(conv_input,
                                           strides,
                                           padding,
                                           name=name).outputs[0]
+
+
+class BiasAddOperation(Operation):
+  """like tf.nn.bias_add
+
+  """
+
+  def __init__(self, bias_input, bias, name=None):
+    super(BiasAddOperation, self).__init__(
+      [bias_input, bias], name=name or "conv3d_transpose")
+
+    output_shape = bias_input.shape
+    self._outputs = [Tensor(self, output_shape, bias_input.dtype)]
+
+    # FIXME: add proper split handling
+    '''unsplittable_dims = [self._in_d_dim, self._in_h_dim, self._in_w_dim,
+                         self._fd_dim, self._fh_dim, self._fw_dim]
+    self._splittable_dims, self._unsplittable_dims = (
+      self._initialize_splittable_and_unsplittable_dims(
+        "splittable", [dim.name for dim in unsplittable_dims]))'''
+
+  def gradient(self, grad_ys):
+    # FIXME: add proper gradient
+    raise NotImplementedError
+
+  def lower(self, lowering):
+    mesh_impl = lowering.mesh_impl(self)
+    bias_input, bias = self.inputs
+    # FIXME: add proper error handling
+    '''if mesh_impl.tensor_dimension_to_mesh_axis(self._in_d_dim) is not None:
+      raise ValueError("can't slice along dimension d")
+    if mesh_impl.tensor_dimension_to_mesh_axis(self._in_h_dim) is not None:
+      raise ValueError("can't slice along dimension h")
+    if mesh_impl.tensor_dimension_to_mesh_axis(self._in_w_dim) is not None:
+      raise ValueError("can't slice along dimension w")
+    if mesh_impl.tensor_dimension_to_mesh_axis(self._fd_dim) is not None:
+      raise ValueError("can't slice along dimension fd")
+    if mesh_impl.tensor_dimension_to_mesh_axis(self._fh_dim) is not None:
+      raise ValueError("can't slice along dimension fh")
+    if mesh_impl.tensor_dimension_to_mesh_axis(self._fw_dim) is not None:
+      raise ValueError("can't slice along dimension fw")'''
+
+    # run conv3d_transpose in each slice.
+    def tf_fn(tf_input, tf_filter):
+      output = tf.nn.bias_add(
+        tf_input, tf_filter)
+      return output
+
+    y = mesh_impl.slicewise(
+      tf_fn, lowering.tensors[bias_input], lowering.tensors[bias])
+
+    # FIXME: add proper reduction
+    '''
+    # reducing out input channels - may need to allreduce
+    in_mesh_axis = mesh_impl.tensor_dimension_to_mesh_axis(self._in_dim)
+    if in_mesh_axis is not None:
+      def add_counter_fn():
+        lowering.add_counter(
+          "allreduce/%s/conv3d_transpose_op" % [in_mesh_axis],
+          mesh_impl.laid_out_size(self.outputs[0].shape))
+
+      y = LazyAllreduceSum(mesh_impl, y, [in_mesh_axis], add_counter_fn)'''
+    lowering.set_tensor_lowering(self.outputs[0], y)
+    computation_shape = _shape_union([bias.shape, self.outputs[0].shape])
+    lowering.add_counter("bias/forward",
+                         mesh_impl.laid_out_size(computation_shape))
+    lowering.add_counter("bias_unique/forward",
+                         computation_shape.size)
 
 
 class ShiftOperation(Operation):
@@ -6384,28 +6448,28 @@ def halo_exchange(x, blocks_dim, block_size_dim, halo_size, wrap=False):
     x: a Tensor.
     blocks_dim: a Dimension in x.shape
     block_size_dim: a Dimension in x.shape
-    halo_size: an integer
+    halo_size: a List
     wrap: a boolean
 
   Returns:
     a Tensor with the same shape as x, other than in block_size_dim, whose
     size is increased by 2*halo_size.
   """
-  if halo_size == 0:
+  if halo_size == [0,0]:
     return x
 
   block_size = block_size_dim.size
-  partial_size = halo_size % block_size
-  num_complete_blocks = halo_size // block_size
+  partial_size = [halo_size[0] % block_size, halo_size[1] % block_size]
+  num_complete_blocks = max(halo_size) // block_size
   parts = [x]
 
   for i in xrange(1, num_complete_blocks + 1):
     parts = ([shift(x, i, blocks_dim, wrap)] + parts +
              [shift(x, -i, blocks_dim, wrap)])
-  if partial_size > 0:
-    left_margin = mtf_slice(x, 0, partial_size, block_size_dim.name)
+  if partial_size != [0,0]:
+    left_margin = mtf_slice(x, 0, partial_size[1], block_size_dim.name)
     right_margin = mtf_slice(
-        x, block_size_dim.size - partial_size, partial_size,
+        x, block_size_dim.size - partial_size[0], partial_size[0],
         block_size_dim.name)
     parts = (
         [shift(right_margin, num_complete_blocks + 1, blocks_dim, wrap)]

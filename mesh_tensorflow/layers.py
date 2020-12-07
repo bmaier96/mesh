@@ -798,17 +798,18 @@ def conv3d_with_blocks(
 
   # Halo exchange for d_blocks and h_blocks.
   d_dim, h_dim, w_dim = x.shape.dims[-4:-1]
+  halo_sizes = mtf.calculate_same_padding_size(x.shape, filter_size, strides)
   for blocks_dim, block_size_dim, halo_size in [
-      (d_blocks_dim, d_dim, filter_size[0] // 2),
-      (h_blocks_dim, h_dim, filter_size[1] // 2)]:
-    if halo_size > 0:
+      (d_blocks_dim, d_dim, halo_sizes[0]),
+      (h_blocks_dim, h_dim, halo_sizes[1])]:
+    if halo_size != [0,0]:
       if blocks_dim is not None:
         x = mtf.halo_exchange(x, blocks_dim, block_size_dim, halo_size)
       else:
-        x = mtf.pad(x, [halo_size, halo_size], block_size_dim.name)
+        x = mtf.pad(x, halo_size, block_size_dim.name)
 
   # Pad w dimension with zeros.
-  x = mtf.pad(x, [filter_size[2] // 2, filter_size[2] // 2],
+  x = mtf.pad(x, halo_sizes[2],
               dim_name=w_dim.name, name="conv3d_pad_w_dim")
   return conv3d(x, output_dim,
                 filter_size, strides, "VALID", filter_initializer,
@@ -854,6 +855,29 @@ def conv3d_transpose(x, output_dim,
     return mtf.Conv3dTransposeOperation(
         x, conv_filter, strides, padding).outputs[0]
 
+
+def bias_add(x, bias_initializer, variable_dtype=None, name=None):
+    """Bias addition.
+
+    Args:
+      x: a mtf.Tensor of channel last format
+      bias_initializer: the initializer for tf.get_variable
+      variable_dtype: a mtf.VariableDType
+      name: a string used for tf.variable_scope
+
+    Returns:
+      a mtf.Tensor
+    """
+    input_dim = x.shape[-1]
+    with tf.variable_scope(name, default_name="bias_add"):
+        if variable_dtype is None:
+            variable_dtype = mtf.VariableDType(activation_dtype=x.dtype)
+        bias = mtf.get_variable(
+            x.mesh, "bias", [input_dim],
+            initializer=bias_initializer, dtype=variable_dtype)
+
+        return mtf.BiasAddOperation(
+            x, bias).outputs[0]
 
 def conv3d_transpose_with_blocks(
     x, output_dim, filter_size=(2, 2, 2),
